@@ -17,16 +17,16 @@
 #define BRIGHTNESS 100 // 255 max.
 
 // Put your location here (lat,lon).
-String latlon = "52.52,13.40"; // Berlin, Germany
+#define LAT_LON "52.52,13.40" // Berlin, Germany
 
 // Register for the darsky API at https://darksky.net/dev
-String darksky_apikey = "--YOUR API KEY--";
+#define DARKSKY_APIKEY  = "--YOUR API KEY--";
 
 // ---------------------------------------------------------
 
 
-String api_url = "https://api.darksky.net/forecast/" + darksky_apikey + "/" + latlon + "/?exclude=currently,hourly,flags,alerts&units=ca";
-String api_fingerprint = "EB:C2:67:D1:B1:C6:77:90:51:C1:4A:0A:BA:83:E1:F0:6D:73:DD:B8";
+#define API_URL "https://api.darksky.net/forecast/" DARKSKY_APIKEY "/" LAT_LON "/?exclude=currently,hourly,flags,alerts&units=ca"
+#define API_FINGERPRINT "EB:C2:67:D1:B1:C6:77:90:51:C1:4A:0A:BA:83:E1:F0:6D:73:DD:B8"
 #define NUM_DAYS 8
 
 WiFiManager wifiManager;
@@ -78,8 +78,8 @@ void loop() {
 void updateWeatherData() {
   Serial.println("Getting weather data ...");
 
-  Serial.println(api_url);
-  http.begin(api_url, api_fingerprint);
+  Serial.println(API_URL);
+  http.begin(API_URL, API_FINGERPRINT);
   int httpCode = http.GET();
   Serial.println(httpCode);
   if (httpCode != 200) {
