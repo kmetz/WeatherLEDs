@@ -21,7 +21,7 @@
 
 // Register for the darsky API at https://darksky.net/dev
 #define DARKSKY_APIKEY  = "--YOUR API KEY--";
-
+#define DARKSKY_APIKEY "bf9a10fb30b899fa323bd76a496825c6"
 // ---------------------------------------------------------
 
 
@@ -33,7 +33,6 @@ WiFiManager wifiManager;
 WiFiClient wifiClient;
 Adafruit_NeoPixel leds;
 Ticker updateTicker;
-HTTPClient http;
 
 struct conditions {
   char icon[32];
@@ -43,37 +42,58 @@ struct conditions {
 };
 
 struct conditions days[NUM_DAYS];
-
+boolean needsUpdate = true;
+unsigned long updatedAt = 0;
 
 void setup() {
   Serial.begin(115200);
   Serial.println("Hi.");
-  
+
   leds = Adafruit_NeoPixel(NUM_DAYS, LED_PIN, NEO_GRB + NEO_KHZ800);
   leds.setBrightness(BRIGHTNESS);
   leds.begin();
   leds.clear();
   leds.show();
-  
+
   wifiManager.autoConnect("WEATHERLEDS");
   Serial.println("WiFi Connected.");
-
-  updateWeatherData();
-
-  // Update every 2 hours.
-  // TODO fix, actually crashes and triggers a wdt reset.
-  updateTicker.attach(60*60*2, updateWeatherData);
+  
+  // Update every 2 hours. TODO
+  updateTicker.attach(60*60*2, requestUpdate);
 }
 
+unsigned long currentTime = millis();
+unsigned long lastAnimationTime = currentTime;
 
 void loop() {
-  unsigned long time = millis();
-  for (int i=0; i<NUM_DAYS; i++) {
-    animateLed(i, time);
+  currentTime = millis();
+
+  // Update when neccesary.
+  if (needsUpdate) {
+    Serial.println("Updating ...");
+    updateWeatherData();
+    updatedAt = currentTime;
+    needsUpdate = false;
   }
-  leds.show();
+
+  // Animate LEDs at 60hz.
+  if (currentTime - lastAnimationTime > 1000/60) {
+    for (int i=0; i<NUM_DAYS; i++) {
+      animateLed(i, currentTime);
+    }
+    leds.show();
+    lastAnimationTime = currentTime;
+  } 
 }
 
+
+void requestUpdate() {
+  needsUpdate = true;
+}
+
+
+HTTPClient http;
+DynamicJsonBuffer jsonBuffer;
 
 void updateWeatherData() {
   Serial.println("Getting weather data ...");
@@ -85,7 +105,6 @@ void updateWeatherData() {
   if (httpCode != 200) {
     Serial.println("An HTTP Error occured.");
   } else {
-    DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.parseObject(http.getString());
     JsonObject& daily = root["daily"];
     JsonArray& data = daily["data"];
@@ -108,8 +127,13 @@ void updateWeatherData() {
 }
 
 
+conditions day;
+int phase;
+int level;
+
 void animateLed(unsigned int led, unsigned long time) {
-  conditions day = days[led];
+  day = days[led];
+  phase = 128 + 127 * cos(2 * PI / 1500 * (time + (1000 * (double(led) / NUM_DAYS))));
 
   // icon
   // A machine-readable text summary of this data point, suitable for selecting an icon for display.
@@ -121,64 +145,62 @@ void animateLed(unsigned int led, unsigned long time) {
   // Clear
   if (strcmp(day.icon, "clear-day") == 0
    || strcmp(day.icon, "clear-night") == 0) {
-    leds.setPixelColor(led, leds.Color(255, 200, 0));
+    leds.setPixelColor(led, 255, 200, 0);
   }
 
   // Rain
   else if (strcmp(day.icon, "rain") == 0) {
-    leds.setPixelColor(led, leds.Color(
+    leds.setPixelColor(led,
       random(0, 32),
       random(0, 32),
       random(map(day.precipIntensity, 0.0, 1.0, 255, 0), 255)
-    ));
+    );
   }
 
   // Snow
   else if (strcmp(day.icon, "snow") == 0) {
-    int level = random(200, 255);
+    level = random(200, 255);
     leds.setPixelColor(led, leds.Color(level, level, level));
   }
   else if (strcmp(day.icon, "sleet") == 0) {
-    leds.setPixelColor(led, leds.Color(
+    leds.setPixelColor(led,
       random(110, 130),
       random(110, 130),
       random(200, 255)
-    ));
+    );
   }
 
   // Wind
   else if (strcmp(day.icon, "wind") == 0) {
-    int phase = 128 + 127 * cos(2 * PI / max(300.0, 1500 - 10*day.windSpeed) * (time + (1000 * (double(led) / NUM_DAYS))));
-    int level = map(phase, 0, 255, 100, 200);
-    leds.setPixelColor(led, leds.Color(level, level, level));
+    level = map(
+      128 + 127 * cos(2 * PI / max(300.0, 1500 - 10*day.windSpeed) * (time + (1000 * (double(led) / NUM_DAYS)))),
+      0, 255, 100, 200);
+    leds.setPixelColor(led, level, level, level);
   }
 
   // Fog
   else if (strcmp(day.icon, "fog") == 0) { 
-    leds.setPixelColor(led, leds.Color(32, 32, 32));
+    leds.setPixelColor(led, 32, 32, 32);
   }
 
   // Cloudy
   else if (strcmp(day.icon, "cloudy") == 0) {
-    int phase = 128 + 127 * cos(2 * PI / 1500 * (time + (1000 * (double(led) / NUM_DAYS))));
-    int level = map(phase, 0, 255, 100, 200);
-    leds.setPixelColor(led, leds.Color(level, level, level));
+    level = map(phase, 0, 255, 100, 200);
+    leds.setPixelColor(led, level, level, level);
   }
 
   // Partly cloudy
   else if (strcmp(day.icon, "partly-cloudy-day") == 0
         || strcmp(day.icon, "partly-cloudy-night") == 0) {
-    int phase = 128 + 127 * cos(2 * PI / 1500 * time + (1000 * (double(led) / NUM_DAYS)));
-    double cc = day.cloudCover;
-    leds.setPixelColor(led, leds.Color(
+    leds.setPixelColor(led,
       map(phase, 0, 255, 100, 255),
-      map(phase, 0, 255, 100, 200 + cc*55),
-      map(phase, 0, 255, 100, cc*255)
-    ));
+      map(phase, 0, 255, 100, 200 + day.cloudCover*55),
+      map(phase, 0, 255, 100, day.cloudCover*255)
+    );
   }
 
   // Unknown
   else {
-    leds.setPixelColor(led, leds.Color(255, 0, 0));
+    leds.setPixelColor(led, 255, 0, 0);
   }
 }
