@@ -1,17 +1,28 @@
-#include <ESP8266WiFi.h>          // ESP8266 Core WiFi Library
-#include <ESP8266HTTPClient.h>    // ESP8266 HTTP Client Library
+#if defined(ESP8266)
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266HTTPClient.h>
+#else
+#include <WiFi.h>
+#include <WebServer.h>
+#include <HTTPClient.h>
+#endif
+#include <Arduino.h>
 #include <DNSServer.h>            // Local DNS Server used for redirecting all requests to the configuration portal
-#include <ESP8266WebServer.h>     // Local WebServer used to serve the configuration portal
-#include <WiFiManager.h>          // https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 #include <Adafruit_NeoPixel.h>    // LED
 #include <ArduinoJson.h>          // https://github.com/bblanchon/ArduinoJson
 #include <Ticker.h>
 
+#define min(a,b) ((a)<(b)?(a):(b))
+#define max(a,b) ((a)>(b)?(a):(b))
+
 
 // Settings ------------------------------------------------
+const char* ssid     = "--SSID--";
+const char* password = "--PASSWORD--";
 
 // Pin where the LED stripe data port is connected.
-#define LED_PIN 14
+#define LED_PIN 12
 
 // Overall brightness of the LEDs.
 #define BRIGHTNESS 100 // 255 max.
@@ -21,7 +32,6 @@
 
 // Register for the darsky API at https://darksky.net/dev
 #define DARKSKY_APIKEY  = "--YOUR API KEY--";
-#define DARKSKY_APIKEY "bf9a10fb30b899fa323bd76a496825c6"
 // ---------------------------------------------------------
 
 
@@ -29,7 +39,7 @@
 #define API_FINGERPRINT "EB:C2:67:D1:B1:C6:77:90:51:C1:4A:0A:BA:83:E1:F0:6D:73:DD:B8"
 #define NUM_DAYS 8
 
-WiFiManager wifiManager;
+
 WiFiClient wifiClient;
 Adafruit_NeoPixel leds;
 Ticker updateTicker;
@@ -55,7 +65,11 @@ void setup() {
   leds.clear();
   leds.show();
 
-  wifiManager.autoConnect("WEATHERLEDS");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
   Serial.println("WiFi Connected.");
   
   // Update every 2 hours. TODO
@@ -99,11 +113,12 @@ void updateWeatherData() {
   Serial.println("Getting weather data ...");
 
   Serial.println(API_URL);
-  http.begin(API_URL, API_FINGERPRINT);
+  http.begin(API_URL);
   int httpCode = http.GET();
   Serial.println(httpCode);
   if (httpCode != 200) {
     Serial.println("An HTTP Error occured.");
+    Serial.println(http.errorToString(httpCode));
   } else {
     JsonObject& root = jsonBuffer.parseObject(http.getString());
     JsonObject& daily = root["daily"];
