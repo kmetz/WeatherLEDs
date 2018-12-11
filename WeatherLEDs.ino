@@ -8,9 +8,8 @@
 #include <HTTPClient.h>
 #endif
 #include <Arduino.h>
-#include <DNSServer.h>            // Local DNS Server used for redirecting all requests to the configuration portal
-#include <Adafruit_NeoPixel.h>    // LED
-#include <ArduinoJson.h>          // https://github.com/bblanchon/ArduinoJson
+#include <NeoPixelBus.h>
+#include <ArduinoJson.h>
 #include <Ticker.h>
 
 #define min(a,b) ((a)<(b)?(a):(b))
@@ -22,10 +21,7 @@ const char* ssid     = "--SSID--";
 const char* password = "--PASSWORD--";
 
 // Pin where the LED stripe data port is connected.
-#define LED_PIN 12
-
-// Overall brightness of the LEDs.
-#define BRIGHTNESS 100 // 255 max.
+#define LED_PIN 14
 
 // Put your location here (lat,lon).
 #define LAT_LON "52.52,13.40" // Berlin, Germany
@@ -41,7 +37,7 @@ const char* password = "--PASSWORD--";
 
 
 WiFiClient wifiClient;
-Adafruit_NeoPixel leds;
+NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> leds(NUM_DAYS, LED_PIN);
 Ticker updateTicker;
 
 struct conditions {
@@ -59,11 +55,8 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Hi.");
 
-  leds = Adafruit_NeoPixel(NUM_DAYS, LED_PIN, NEO_GRB + NEO_KHZ800);
-  leds.setBrightness(BRIGHTNESS);
-  leds.begin();
-  leds.clear();
-  leds.show();
+  leds.Begin();  
+  leds.Show();
 
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
@@ -95,7 +88,8 @@ void loop() {
     for (int i=0; i<NUM_DAYS; i++) {
       animateLed(i, currentTime);
     }
-    leds.show();
+    leds.Show();
+    
     lastAnimationTime = currentTime;
   } 
 }
@@ -160,29 +154,29 @@ void animateLed(unsigned int led, unsigned long time) {
   // Clear
   if (strcmp(day.icon, "clear-day") == 0
    || strcmp(day.icon, "clear-night") == 0) {
-    leds.setPixelColor(led, 255, 200, 0);
+    leds.SetPixelColor(led, RgbColor(255, 200, 0));
   }
 
   // Rain
   else if (strcmp(day.icon, "rain") == 0) {
-    leds.setPixelColor(led,
+    leds.SetPixelColor(led, RgbColor(
       random(0, 32),
       random(0, 32),
       random(map(day.precipIntensity, 0.0, 1.0, 255, 0), 255)
-    );
+    ));
   }
 
   // Snow
   else if (strcmp(day.icon, "snow") == 0) {
     level = random(200, 255);
-    leds.setPixelColor(led, leds.Color(level, level, level));
+    leds.SetPixelColor(led, RgbColor(level, level, level));
   }
   else if (strcmp(day.icon, "sleet") == 0) {
-    leds.setPixelColor(led,
+    leds.SetPixelColor(led, RgbColor(
       random(110, 130),
       random(110, 130),
       random(200, 255)
-    );
+    ));
   }
 
   // Wind
@@ -190,32 +184,32 @@ void animateLed(unsigned int led, unsigned long time) {
     level = map(
       128 + 127 * cos(2 * PI / max(300.0, 1500 - 10*day.windSpeed) * (time + (1000 * (double(led) / NUM_DAYS)))),
       0, 255, 100, 200);
-    leds.setPixelColor(led, level, level, level);
+    leds.SetPixelColor(led, RgbColor(level, level, level));
   }
 
   // Fog
   else if (strcmp(day.icon, "fog") == 0) { 
-    leds.setPixelColor(led, 32, 32, 32);
+    leds.SetPixelColor(led, RgbColor(32, 32, 32));
   }
 
   // Cloudy
   else if (strcmp(day.icon, "cloudy") == 0) {
     level = map(phase, 0, 255, 100, 200);
-    leds.setPixelColor(led, level, level, level);
+    leds.SetPixelColor(led,  RgbColor(level, level, level));
   }
 
   // Partly cloudy
   else if (strcmp(day.icon, "partly-cloudy-day") == 0
         || strcmp(day.icon, "partly-cloudy-night") == 0) {
-    leds.setPixelColor(led,
+    leds.SetPixelColor(led, RgbColor(
       map(phase, 0, 255, 100, 255),
       map(phase, 0, 255, 100, 200 + day.cloudCover*55),
       map(phase, 0, 255, 100, day.cloudCover*255)
-    );
+    ));
   }
 
   // Unknown
   else {
-    leds.setPixelColor(led, 255, 0, 0);
+    leds.SetPixelColor(led, RgbColor(255, 0, 0));
   }
 }
