@@ -10,7 +10,7 @@ Display daily weather forecasts on a LED stripe connected to an ESP8266. [Powere
 - [ESP8266 core for Arduino](https://github.com/esp8266/Arduino)
 - Arduino libraries (install thru library manager):
   - NeoPixelBus
-  - ArduinoJson 5.x
+  - ArduinoJson 6.x
 
 ## How to use
 1. Enter your WiFi credentials, location and the API key into the code.
