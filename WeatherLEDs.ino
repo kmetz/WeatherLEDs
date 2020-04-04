@@ -1,11 +1,15 @@
 #if defined(ESP8266)
 #include <ESP8266WiFi.h>
+#include <ESP8266WiFiMulti.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPClient.h>
+ESP8266WiFiMulti wifiMulti;
 #else
 #include <WiFi.h>
+#include <WiFiMulti.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
+WiFiMulti wifiMulti;
 #endif
 #include <Arduino.h>
 #include <NeoPixelBus.h>
@@ -17,24 +21,26 @@
 
 
 // Settings ------------------------------------------------
-const char* ssid     = "--SSID--";
-const char* password = "--PASSWORD--";
+// WiFi
+#define SSID "--YOUR SSID--"
+#define PASSWORD "--PASSWORD--"
 
 // Pin where the LED stripe data port is connected.
-#define LED_PIN 14
+#define LED_PIN D2
 
 // Put your location here (lat,lon).
 #define LAT_LON "52.52,13.40" // Berlin, Germany
 
 // Register for the darsky API at https://darksky.net/dev
-#define DARKSKY_APIKEY  = "--YOUR API KEY--";
+#define DARKSKY_APIKEY "--YOUR API KEY--"
+
+// Normal or reversed mode.
+#define REVERSED false
 // ---------------------------------------------------------
 
 
 #define API_URL "https://api.darksky.net/forecast/" DARKSKY_APIKEY "/" LAT_LON "/?exclude=currently,hourly,flags,alerts&units=ca"
-#define API_FINGERPRINT "EB:C2:67:D1:B1:C6:77:90:51:C1:4A:0A:BA:83:E1:F0:6D:73:DD:B8"
 #define NUM_DAYS 8
-
 
 WiFiClient wifiClient;
 NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> leds(NUM_DAYS, LED_PIN);
@@ -51,6 +57,14 @@ struct conditions days[NUM_DAYS];
 boolean needsUpdate = true;
 unsigned long updatedAt = 0;
 
+unsigned long currentTime = millis();
+unsigned long lastAnimationTime = currentTime;
+
+conditions day;
+int phase;
+int level;
+
+
 void setup() {
   Serial.begin(115200);
   Serial.println("Hi.");
@@ -58,22 +72,31 @@ void setup() {
   leds.Begin();  
   leds.Show();
 
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  Serial.print("Connecting WiFi ..");
+  WiFi.mode(WIFI_STA);
+  
+  wifiMulti.addAP(SSID, PASSWORD);
+  // You can add multiple APs here:
+  // wifiMulti.addAP(SSID2, PASSWORD2);
+  
+  while (wifiMulti.run() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
   Serial.println("WiFi Connected.");
   
-  // Update every 2 hours. TODO
+  // Update every 2 hours.
   updateTicker.attach(60*60*2, requestUpdate);
 }
 
-unsigned long currentTime = millis();
-unsigned long lastAnimationTime = currentTime;
 
 void loop() {
   currentTime = millis();
+
+  if (wifiMulti.run() != WL_CONNECTED) {
+    Serial.println("WiFi not connected.");
+    delay(500);
+  }
 
   // Update when neccesary.
   if (needsUpdate) {
@@ -100,48 +123,57 @@ void requestUpdate() {
 }
 
 
-HTTPClient http;
-DynamicJsonBuffer jsonBuffer;
-
 void updateWeatherData() {
   Serial.println("Getting weather data ...");
-
   Serial.println(API_URL);
-  http.begin(API_URL);
-  int httpCode = http.GET();
-  Serial.println(httpCode);
+  
+  BearSSL::WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient https;
+  
+  https.begin(client, API_URL);
+  int httpCode = https.GET();
+  
   if (httpCode != 200) {
     Serial.println("An HTTP Error occured.");
-    Serial.println(http.errorToString(httpCode));
-  } else {
-    JsonObject& root = jsonBuffer.parseObject(http.getString());
-    JsonObject& daily = root["daily"];
-    JsonArray& data = daily["data"];
-    
-    for (unsigned int i=0; i<NUM_DAYS; i++) {
-      JsonObject& dayData = data[i];
-      conditions day;
-      
-      strncpy(day.icon, dayData["icon"], sizeof(day.icon));
-      day.cloudCover = dayData.get<double>("cloudCover");
-      day.windSpeed = dayData.get<double>("windSpeed");
-      day.precipIntensity = dayData.get<double>("precipIntensity");
-      days[i] = day;
-      
-      Serial.println(String(i) + ": " + day.icon + "|cc:" + day.cloudCover + "|ws:" + day.windSpeed + "|pi:" + day.precipIntensity);
-    }
-    Serial.println("Weather data updated.");
+    Serial.println(httpCode);
+    Serial.println(https.errorToString(httpCode));
+    client.stop();
+    https.end();
+    return;
   }
-  http.end();
+
+  DynamicJsonDocument jsonDoc(16384);
+  DeserializationError error = deserializeJson(jsonDoc, https.getStream());
+  
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.c_str());
+    return;
+  }
+  
+  for (unsigned int i=0; i<NUM_DAYS; i++) {
+    conditions day;
+
+    String icon = jsonDoc["daily"]["data"][i]["icon"].as<String>();
+    icon.toCharArray(day.icon, 32);
+    
+    day.cloudCover      = jsonDoc["daily"]["data"][i]["cloudCover"].as<double>();
+    day.windSpeed       = jsonDoc["daily"]["data"][i]["windSpeed"].as<double>();
+    day.precipIntensity = jsonDoc["daily"]["data"][i]["precipIntensity"].as<double>();
+    days[i] = day;
+    
+    Serial.println(String(i) + ": " + day.icon + "|cc:" + day.cloudCover + "|ws:" + day.windSpeed + "|pi:" + day.precipIntensity);
+  }
+
+  Serial.println("Weather data updated.");
+  client.stop();
+  https.end();
 }
 
 
-conditions day;
-int phase;
-int level;
-
 void animateLed(unsigned int led, unsigned long time) {
-  day = days[led];
+  day = REVERSED ? days[NUM_DAYS - led - 1] : days[led];
   phase = 128 + 127 * cos(2 * PI / 1500 * (time + (1000 * (double(led) / NUM_DAYS))));
 
   // icon
