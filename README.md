@@ -1,7 +1,20 @@
 # WeatherLEDs
 
-Display daily weather forecasts on a LED stripe connected to an ESP8266.  
+Shows daily weather forecasts on a RGB LED stripe connected to an ESP8266.  
+The next 8 days are represented each by one animated, colored pixel.  
 Uses local weather forecast data from [OpenWeatherMap](https://openweathermap.org) (formerly used DarkSky API).
+
+![image](images/WeatherLEDs.jpeg)
+
+
+## Colors
+
+- Yellow: sunny.
+- Fading between yellow and white: cloudy (more yellow or white depending on cloud coverage).
+- A darker steady white shows fog.
+- Blue: rain, the heavier, the more it flickers.
+
+(Should be pretty self-explanatory)
 
 
 ## Requirements
@@ -28,11 +41,7 @@ When using the Arduino IDE, install these:
    - or with Arduino IDE: open `WeatherLEDs/WeatherLEDs.ino` and click the run/upload button.
 
 
-## Colors
+## Enclosure
 
-Should be pretty self-explanatory.
-
-- Yellow: sunny.
-- Fading between yellow and white: cloudy (more yellow or white depending on cloud coverage).
-- A darker steady white shows fog.
-- Blue: rain, the heavier, the more it flickers.
+A not-so-perfect 3D printable enclosure (pictured above) is included (`3D print parts/WeatherLEDs_V8.stl`), 
+suitable for a stripe with 8 30mm spaced, 5x5mm quadratic WS2812B RGB LEDs, and a WeMos D1 mini board.
