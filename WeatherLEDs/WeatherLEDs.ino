@@ -156,7 +156,7 @@ void animateLed(unsigned int led, unsigned long time) {
   }
 
   else if (d.weather == "Snow") {
-    level = random(map(d.snow, 0.0, 10.0, 255, 0), 255);
+    level = random(map(d.snow, 0.0, 20.0, 255, 0), 255);
     leds.SetPixelColor(led, RgbColor(level, level, level));
   }
 
