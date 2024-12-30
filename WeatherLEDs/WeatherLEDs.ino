@@ -13,10 +13,12 @@
 #endif
 
 #include <Arduino.h>
-#include <NeoPixelBus.h>
+#include <NeoPixelBusLg.h>
 #include <ArduinoJson.h>
 #include <Ticker.h>
 
+#define STR_HELPER(x) #x
+#define STR(x) STR_HELPER(x)
 
 // Settings ------------------------------------------------
 
@@ -24,10 +26,7 @@
 #define SSID "--YOUR SSID--"
 #define PASSWORD "--PASSWORD--"
 
-// Register for the OpenWeatherMap API at https://openweathermap.org/api
-#define OWM_API_KEY "--YOUR API KEY--"
-
-// Put your location here (lat,lon).
+// Put your location here.
 #define LAT "52.52"
 #define LON "13.40"
 
@@ -38,28 +37,37 @@
 // Normal or reversed mode.
 #define REVERSED false
 
-// ---------------------------------------------------------
+// Brightness, 0 to 100.
+#define BRIGHTNESS 90
 
+// ---------------------------------------------------------
 
 #define NUM_DAYS 8
 
-#define OWM_API_URL "http://api.openweathermap.org/data/2.5/onecall?lat=" LAT "&lon=" LON "&exclude=current,minutely,hourly&appid=" OWM_API_KEY
+#define API_URL "http://api.open-meteo.com/v1/forecast?latitude=" LAT "&longitude=" LON \
+  "&daily=weather_code,daylight_duration,sunshine_duration,precipitation_sum,wind_speed_10m_max" \
+  "&forecast_days=" STR(NUM_DAYS) \
+  "&timezone=auto"
+
 #define ARDUINOJSON_DECODE_UNICODE 1
+
+#define NTP_SERVER_1 "0.pool.ntp.org"
+#define NTP_SERVER_2 "1.pool.ntp.org"
+#define NTP_SERVER_3 "2.pool.ntp.org"
 
 #define min(a, b) ((a)<(b)?(a):(b))
 #define max(a, b) ((a)>(b)?(a):(b))
 
-
-WiFiClient wifiClient;
-NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> leds(NUM_DAYS, LED_PIN);
+NeoPixelBusLg<NeoGrbFeature, Neo800KbpsMethod> leds(NUM_DAYS, LED_PIN);
+WiFiClient client;
+HTTPClient http;
 Ticker updateTicker;
 
 struct conditions {
-  std::string weather;
-  double clouds{};
-  double windSpeed{};
-  double rain{};
-  double snow{};
+  unsigned int weather_code{}; // WMO weather code
+  double sunshine_ratio{}; // 0..1
+  double wind{}; // max wind speed (km/h)
+  double precipitation{}; // precipitation sum (mm)
 };
 
 struct conditions days[NUM_DAYS];
@@ -67,15 +75,17 @@ boolean needsUpdate = true;
 unsigned long currentTime = millis();
 unsigned long lastAnimationTime = currentTime;
 
+conditions d;
+int phase;
+int level;
+
 
 void updateWeatherData() {
   Serial.println("Getting weather data ...");
-  Serial.println(OWM_API_URL);
+  Serial.println(API_URL);
 
-  WiFiClient client;
-  HTTPClient http;
-
-  http.begin(client, OWM_API_URL);
+  http.useHTTP10(true);
+  http.begin(client, API_URL);
   int httpCode = http.GET();
   if (httpCode != 200) {
     Serial.println("An HTTP Error occured.");
@@ -88,11 +98,12 @@ void updateWeatherData() {
 
   // Define filter.
   StaticJsonDocument<512> filter;
-  filter["daily"][0]["weather"][0]["main"] = true;
-  filter["daily"][0]["clouds"] = true;
-  filter["daily"][0]["wind_speed"] = true;
-  filter["daily"][0]["rain"] = true;
-  filter["daily"][0]["snow"] = true;
+  filter["daily"]["time"][0] = true;
+  filter["daily"]["weather_code"][0] = true;
+  filter["daily"]["daylight_duration"][0] = true;
+  filter["daily"]["sunshine_duration"][0] = true;
+  filter["daily"]["precipitation_sum"][0] = true;
+  filter["daily"]["wind_speed_10m_max"][0] = true;
 
   // Parse JSON response.
   DynamicJsonDocument jsonDoc(16384);
@@ -106,15 +117,17 @@ void updateWeatherData() {
   for (unsigned int i = 0; i < NUM_DAYS; i++) {
     conditions day;
 
-    day.weather    = jsonDoc["daily"][i]["weather"][0]["main"].as<std::string>();
-    day.clouds     = jsonDoc["daily"][i]["clouds"].as<double>();
-    day.windSpeed  = jsonDoc["daily"][i]["wind_speed"].as<double>();
-    day.rain       = jsonDoc["daily"][i]["rain"].as<double>();
-    day.snow       = jsonDoc["daily"][i]["snow"].as<double>();
+    day.weather_code   = jsonDoc["daily"]["weather_code"][i].as<uint>();
+    day.sunshine_ratio = jsonDoc["daily"]["sunshine_duration"][i].as<double>() / jsonDoc["daily"]["daylight_duration"][i].as<double>();
+    day.precipitation  = jsonDoc["daily"]["precipitation_sum"][i].as<double>();
+    day.wind           = jsonDoc["daily"]["wind_speed_10m_max"][i].as<double>();
 
     days[i] = day;
 
-    Serial.println(String(i) + ": " + day.weather.c_str() + ", clouds:" + day.clouds + ", wind:" + day.windSpeed + ", rain:" + day.rain + ", snow:" + day.snow);
+    Serial.println(
+      String(i) + " " + jsonDoc["daily"]["time"][i].as<std::string>().c_str()
+      + ": weather_code: " + day.weather_code + ", sunshine_ratio: " + day.sunshine_ratio + ", wind: " + day.wind + ", precipitation: " + day.precipitation
+    );
   }
 
   Serial.println("Weather data updated.");
@@ -127,77 +140,104 @@ void requestUpdate() {
 }
 
 
-conditions d;
-int phase;
-int level;
-
 void animateLed(unsigned int led, unsigned long time) {
   d = REVERSED ? days[NUM_DAYS - led - 1] : days[led];
   phase = 128 + 127 * cos(2 * PI / 1500 * (time + (1000 * (double(led) / NUM_DAYS))));
 
-  if (d.weather == "Clear") {
-    leds.SetPixelColor(led, RgbColor(255, 200, 0));
-  }
+  switch (d.weather_code) {
 
-  else if (d.weather == "Rain") {
-    leds.SetPixelColor(led, RgbColor(
-      random(0, 32),
-      random(0, 32),
-      random(map(d.rain, 0.0, 20.0, 255, 0), 255)
-    ));
-  }
+    // Clear
+    case 0:
+      leds.SetPixelColor(led, RgbColor(255, 200, 0));
+      break;
 
-  else if (d.weather == "Drizzle") {
-    leds.SetPixelColor(led, RgbColor(
-      random(110, 130),
-      random(110, 130),
-      random(200, 255)
-    ));
-  }
-
-  else if (d.weather == "Snow") {
-    level = random(map(d.snow, 0.0, 20.0, 255, 0), 255);
-    leds.SetPixelColor(led, RgbColor(level, level, level));
-  }
-
-  else if (d.weather == "Thunderstorm") {
-    level = map(
-      128 + 127 * cos(2 * PI / max(300.0, 1500 - 10 * map(d.windSpeed, 0.0, 100.0, 0.0, 1.0)) * (time + (1000 * (double(led) / NUM_DAYS)))),
-      0, 255, 100, 200
-    );
-    leds.SetPixelColor(led, RgbColor(level, floor(level * 0.5), floor(level * 0.5)));
-  }
-
-  else if (d.weather == "Fog" || d.weather == "Mist") {
-    leds.SetPixelColor(led, RgbColor(32, 32, 32));
-  }
-
-  else if (d.weather == "Clouds") {
+    // Clouds
+    case 1:
+    case 2:
+    case 3:
     leds.SetPixelColor(led, RgbColor(
       map(phase, 0, 255, 100, 255),
-      map(phase, 0, 255, 100, 200 + (d.clouds / 100.0) * 55),
-      map(phase, 0, 255, 100, (d.clouds / 100.0) * 255)
+      map(phase, 0, 255, 100, 200 + (1.0 - d.sunshine_ratio) * 55),
+      map(phase, 0, 255, 100, (1.0 - d.sunshine_ratio) * 255)
     ));
-  }
+    break;
 
-  // Unknown
-  else {
-    leds.SetPixelColor(led, RgbColor(
-      map(phase, 0, 255, 100, 255), 0, 0
-    ));
+    // Fog
+    case 45:
+    case 48:
+      leds.SetPixelColor(led, RgbColor(100, 100, 100));
+    break;
+
+    // Drizzle
+    case 51:
+    case 53:
+    case 55:
+      leds.SetPixelColor(led, RgbColor(
+        random(110, 130),
+        random(110, 130),
+        random(200, 255)
+      ));
+    break;
+
+    // Rain
+    case 61:
+    case 63:
+    case 65:
+    case 80:
+    case 81:
+    case 82:
+      leds.SetPixelColor(led, RgbColor(
+        random(0, 32),
+        random(0, 32),
+        random(map(d.precipitation, 0.0, 20.0, 255, 0), 255)
+      ));
+      break;
+
+    // Snow
+    case 56:
+    case 57:
+    case 66:
+    case 67:
+    case 71:
+    case 73:
+    case 75:
+    case 77:
+    case 85:
+    case 86:
+      level = random(map(d.precipitation, -3.0, 20.0, 255, 100), 255);
+      leds.SetPixelColor(led, RgbColor(level, level, level));
+      break;
+
+    // Thunderstorm
+    case 95:
+    case 96:
+    case 99:
+      level = map(
+        128 + 127 * cos(2 * PI / max(300.0, 1500 - 10 * map(d.wind, 0.0, 75.0, 0.0, 1.0)) * (time + (1000 * (double(led) / NUM_DAYS)))),
+        0, 255, 100, 200
+      );
+      leds.SetPixelColor(led, RgbColor(level, floor(level * 0.5), floor(level * 0.5)));
+      break;
+
+    // Unknown
+    default:
+      leds.SetPixelColor(led, RgbColor(
+        map(phase, 0, 255, 100, 150), 0, 0
+      ));
   }
 }
 
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
   Serial.println("Hi.");
 
   leds.Begin();
+  leds.SetLuminance(map(0, 100, 0, 255, BRIGHTNESS));
   leds.ClearTo(RgbColor(0, 0, 0));
   leds.Show();
 
-  Serial.print("Connecting WiFi ..");
+  Serial.print("Connecting WiFi ...");
   WiFi.mode(WIFI_STA);
 
   wifiMulti.addAP(SSID, PASSWORD);
@@ -221,7 +261,7 @@ void setup() {
   leds.ClearTo(RgbColor(0, 0, 0));
   leds.Show();
 
-  // Update every 2 hours.
+  // Update every hour.
   updateTicker.attach(60 * 60 * 2, requestUpdate);
 }
 
